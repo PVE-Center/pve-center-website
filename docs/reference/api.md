@@ -12,6 +12,14 @@ PVE Command Center exposes a typed FastAPI REST API alongside real-time **WebSoc
 | **WebSocket / SSE Auth** | `?token=<api_token_or_jwt>` or `Authorization: Bearer <token>` | `/api/ws/events` and `/api/events/stream` |
 | **Webhook Ingest Auth** | `Authorization: Bearer`, custom `auth_header_name`, `X-Webhook-Token`, `X-API-Key`, or `?token=` | `POST /api/custom-services/{service_id}/webhook` |
 
+### Role-Based Access Control (RBAC)
+
+Authenticated API tokens and sessions carry a `role` (`admin`, `operator`, `viewer`, `device`):
+
+- **`admin`**: Full read and write access, including `/api/config/*`, `/api/auth/tokens`, `/api/setup/config`, `/api/discovery/qr`, users, and notifications configuration.
+- **`operator` / `device`**: Read access plus operational write routes (`/api/pve/*`, `/api/ops/*`, `/api/incidents/*`, service probes, and `/api/notifications/devices`). Configuration edits and admin-only reads return `403`.
+- **`viewer`**: Read-only telemetry (`GET`/`HEAD`, including `/metrics` and `/api/metrics/prometheus`) and push device registration; write routes return `403`.
+
 ### Public Exempt Endpoints
 
 - `GET /api/health`
@@ -104,12 +112,13 @@ Supported event `type` values: `ping`, `config_reloaded`, `service_status_change
 
 ---
 
-## Proxmox VE & Storage
+## Proxmox VE Cluster & Storage
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/pve/overview` | Concurrent fetch of Proxmox node status (CPU, RAM, rootfs, uptime), storage pools, LXC containers, QEMU VMs, SMART disks (`/nodes/{node}/disks/list`), and `/host_mnt` MergerFS/disk mounts. |
-| `POST` | `/api/pve/{vm_type}/{vmid}/{action}` | Executes `start`, `stop`, `reboot`, or `shutdown` on `vm_type` (`lxc` \| `qemu`). Blocks destructive actions when `vmid == panel_self_vmid`. |
+| `GET` | `/api/pve/nodes` | Lists all Proxmox VE cluster nodes with `status`, `online`, `cpu_pct`, `mem_pct`, and `uptime`. |
+| `GET` | `/api/pve/overview` | Optional `?node=<name> \| * \| all`: fetches Proxmox node or multi-node cluster metrics, automatic failover state (`failover_active`), storage pools, LXCs, QEMU VMs, SMART disks, and `/host_mnt` mounts. |
+| `POST` | `/api/pve/{vm_type}/{vmid}/{action}` | Optional `?node=<name>`; executes `start`, `stop`, `reboot`, or `shutdown` on `vm_type` (`lxc` \| `qemu`). Blocks destructive actions when `vmid == panel_self_vmid`. |
 
 ---
 
@@ -172,3 +181,12 @@ Supported event `type` values: `ping`, `config_reloaded`, `service_status_change
 | `PATCH` | `/api/users/{jellyfin_id}` | Updates Jellyfin policy (`is_disabled`, `is_admin`, `enable_all_folders`, `enabled_folders`, `enable_downloading`, `max_active_sessions`) and Jellyseerr `auto_approve`. Protects `protected_owner_username`. |
 | `POST` | `/api/users/{jellyfin_id}/password` | Resets and sets a new password on a Jellyfin user. |
 | `DELETE` | `/api/users/{jellyfin_id}` | Deletes a user from Jellyseerr (if linked) and Jellyfin. Blocks deletion of `protected_owner_username`. |
+
+---
+
+## Prometheus Observability
+
+| Method | Path | Role | Description |
+|---|---|---|---|
+| `GET` | `/metrics` | Any auth (`viewer`+) | Exposes Prometheus text metrics (`0.0.4`): `pve_center_up`, `pve_custom_service_up`, `pve_custom_service_latency_ms`, `pve_incidents_active_total`, `pve_node_*`, and `pve_guest_up`. |
+| `GET` | `/api/metrics/prometheus` | Any auth (`viewer`+) | Alias under `/api` returning the same Prometheus scrape payload. |
