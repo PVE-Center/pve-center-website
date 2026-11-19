@@ -1,6 +1,17 @@
 # Multi-Platform Clients & Build Guides
 
-PVE Command Center provides dedicated client applications across Apple ecosystems, Windows/Linux desktops, Android devices, and web browsers. All native clients share the same **Liquid Glass** & **Cider Studio** aesthetics, support **Demo Mode**, and connect over **LAN HTTP**, **Bonjour mDNS**, or **Tailscale HTTPS**.
+PVE Command Center provides dedicated client applications across Apple ecosystems, Windows/Linux desktops, Android devices, and web browsers. All native clients share the same **Liquid Glass** & **Cider Studio** aesthetics, support **Demo Mode**, **multi-node Proxmox VE cluster switching**, and connect over **LAN HTTP**, **Bonjour mDNS**, or **Tailscale HTTPS**.
+
+---
+
+## Multi-Node Cluster Telemetry & Failover {#multi-node-cluster}
+
+All client apps (Apple SwiftUI, Desktop Tauri v2, Android Capacitor 8, and Web PWA) support multi-node Proxmox VE clusters via the server's `?node=` query contract:
+
+- **Cluster & Per-Node Views**: Switch seamlessly between individual cluster nodes (`GET /api/pve/overview?node=<name>`) and aggregated **Cluster (`*`)** mode (`GET /api/pve/overview?node=*` / `all`) using the Proxmox section pill selector showing live online status and CPU utilization per node.
+- **Automatic Failover Banner**: When the primary configured node is unreachable and the backend automatically fails over (`failover_active: true`), clients surface a warning banner identifying the active fallback node.
+- **Host Node Badges & Targeted Power Actions**: Each LXC container and QEMU VM row displays its hosting `node` badge, and power commands (`start`, `shutdown`, `reboot`, `stop`) automatically pass `?node=<guest.node>` to `POST /api/pve/{vm_type}/{vmid}/{action}` so actions always reach the right hypervisor host.
+- **Two-Node Demo Mode**: Built-in Demo Mode simulates two cluster nodes (`pve-node-01` and `pve-node-02`) with node filtering and cluster-wide aggregation.
 
 ---
 
@@ -13,6 +24,7 @@ A single **Swift 6** / **SwiftUI** codebase (`PVECenter.xcodeproj` & `Package.sw
 - **iPhone & iPad (`iOS 27.0`)**: Liquid Glass TabView, `.sensoryFeedback`, `AVCaptureSession` QR scanner (`pvecenter://`), SwiftData cache, Keychain credential storage, and interactive local/APNs notifications (`Mute 1h`, `Test`).
 - **macOS (`macOS 27.0`)**: `NavigationSplitView`, menu bar popover (`MenuBarExtra`) displaying live CPU/RAM/qBittorrent speeds/Jellyfin streams & Turtle Mode toggle, keyboard shortcuts (`⌘R`, `⌘L`, `⌘;`, `⌘1`–`⌘6`), and ad-hoc `/Applications/PVE Center.app` packaging.
 - **Apple TV (`tvOS 27.0`)**: 10-foot dark glass Focus Engine UI (`TVGlassCardButtonStyle`), live WebSocket alert banners (`activeTVBanner`), and zero-typing encrypted PIN pairing. {#apple-tv}
+- **WidgetKit Snapshot Telemetry Views**: `PVECenter/Views/Components/WidgetSnapshotViews.swift` provides `TelemetryWidgetSnapshot` (capturing `updatedAt`, `serverName`, `nodeName`, `online`, `cpuPct`, `memPct`, `runningGuests`, `totalGuests`, and active incident status), thread-safe `TelemetrySnapshotStore` (persisting ISO-8601 JSON atomically to Caches, `UserDefaults`, and optional App Group `group.io.ac.pvepanel.app` after `AppViewModel.refreshAll`), and the Cider Liquid Glass `GlanceableNodeWidgetView` across iOS, macOS, and tvOS.
 
 ### Apple Build & Run Commands
 
@@ -50,7 +62,7 @@ swift build
 
 **Repository:** [`PVE-Center/pve-center-clients`](https://github.com/PVE-Center/pve-center-clients)
 
-The desktop client wraps the React 19 + Tailwind CSS UI inside a **Tauri v2** Rust shell (`src-tauri/`, Bundle ID `io.github.pvepanel.desktop`, `1280×820` default window) with a native **System Tray** icon (Show/Hide window & Quit) and `localStorage`-persisted remote server profiles so you can point the desktop app to any LAN IP or `https://*.ts.net` URL.
+The desktop client wraps the React 19 + Tailwind CSS UI inside a **Tauri v2** Rust shell (`src-tauri/`, Bundle ID `io.github.pvepanel.desktop`, `1280×820` default window) with a native **System Tray** icon (Show/Hide window & Quit) and encrypted at-rest server profiles/tokens so you can point the desktop app to any LAN IP or `https://*.ts.net` URL.
 
 ### Prerequisites
 
@@ -125,3 +137,22 @@ No separate build is required for browser access: `pve-panel` serves the compile
 
 - **iPhone / iPad Safari**: Open your Tailscale HTTPS URL → **Share** → **Add to Home Screen** for a full-screen standalone Liquid Glass PWA.
 - **Desktop Chromium / Edge**: Click **Install App** in the address bar.
+
+---
+
+## Encrypted Credential & Token Storage (`secureStorage.ts`) {#encrypted-storage}
+
+The shared client runtime (`pve-center-clients/src/lib/secureStorage.ts`, integrated into `src/lib/apiClient.ts` and hydrated on boot via `ensureSecureStorageReady()`) protects persisted server URLs, Bearer API tokens (`pve_...`), and session JWTs at rest:
+
+- **WebCrypto AES-256-GCM**: In secure contexts (`https://`, `localhost`, Tauri, Capacitor), values are encrypted using `window.crypto.subtle` (`AES-GCM`, 256-bit key with random 12-byte IV per write). A non-extractable `CryptoKey` is stored in IndexedDB (`pve_center_secure_keystore`), with an automatic PBKDF2-derived fallback key when IndexedDB is restricted.
+- **Automatic Plaintext Migration**: Existing unencrypted `localStorage` entries (`pve_panel_server_url`, `pve_panel_auth_token`) are decrypted/migrated transparently on startup without logging the user out.
+- **Plain HTTP LAN Fallback**: When `window.crypto.subtle` is unavailable (for example when opening the Web PWA directly over plain `http://192.168.x.x:8000` on a LAN), `secureStorage.ts` falls back synchronously and non-blockingly to an obfuscated payload format so local HTTP homelab access continues working reliably.
+
+---
+
+## Automated Tag-Based Release Publishing (`v*` Tags) {#release-publishing}
+
+In [`PVE-Center/pve-center-clients`](https://github.com/PVE-Center/pve-center-clients), `.github/workflows/build-clients.yml` triggers on pushes/PRs to `main` and on version tags matching `v*` (for example `v1.0.0`):
+
+1. **Matrix Build Jobs**: Builds the Web SPA (`web`), Linux `.AppImage` / `.deb` and Windows `.exe` / `.msi` Tauri v2 installers (`desktop`), and Android Capacitor 8 APK (`android`).
+2. **Release Job (`if: startsWith(github.ref, 'refs/tags/v')`)**: Waits for `[web, desktop, android]`, merges all build artifacts via `actions/download-artifact@v4` (`merge-multiple: true`), packages the Web SPA into `pve-center-web-dist.tar.gz`, and publishes a GitHub Release with auto-generated notes via `softprops/action-gh-release@v2` (`generate_release_notes: true`, `permissions: { contents: write }`).
